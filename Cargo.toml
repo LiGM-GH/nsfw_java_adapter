@@ -3,7 +3,13 @@ name = "nsfw_lib"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "nsfw_daemon"
+path = "src/daemon.rs"
+
 [lib]
+name = "nsfw_lib"
+path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]

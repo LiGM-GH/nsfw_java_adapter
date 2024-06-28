@@ -1,19 +1,21 @@
-use nsfw::{model::Classification, Model};
-use shellexpand::tilde;
-use std::fs::File;
+use std::{
+    io::{Read, Write},
+    net::TcpStream,
+};
 
 use jni::{
-    objects::{JClass, JString},
-    JNIEnv,
+    objects::{JClass, JString}, sys::jstring, JNIEnv
 };
 
 #[no_mangle]
+#[allow(clippy::needless_return)]
 pub extern "system" fn Java_NsfwPredictor_predict<'whatever>(
     mut env: JNIEnv,
     _jclass: JClass<'whatever>,
     filename: JString<'whatever>,
-) -> bool {
-    log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
+) -> jstring {
+    log4rs::init_file("log4rs.yaml", Default::default()).ok();
+
     let filename: String = env
         .get_string(&filename)
         .expect("Couldn't get string")
@@ -21,129 +23,39 @@ pub extern "system" fn Java_NsfwPredictor_predict<'whatever>(
 
     log::trace!("{:?}", &filename);
 
-    let Some(image) = open_image(&filename) else {
-        log::error!("Couldn't open_image(&filename)");
-        return false;
+    let Ok(host) = std::env::var("NSFW_DAEMON_TCP_HOST") else {
+        log::trace!("Provide NSFW_DAEMON_TCP_HOST - a valid host for the daemon to bind");
+        return env.new_string("NoHost").expect("Java, you're evil!").into_raw();
     };
 
-    let Some(model) = load_model() else {
-        log::error!("Couldn't load_model()");
-        return false;
+    let Ok(port) = std::env::var("NSFW_DAEMON_TCP_PORT") else {
+        log::trace!("Provide NSFW_DAEMON_TCP_PORT - a valid port for the daemon to bind");
+        return env.new_string("NoPort").expect("Java, you're evil!").into_raw();
     };
 
-    let Some(classifications) = classif(&model, &image) else {
-        log::error!("Couldn't classif(&model, &image)");
-        return false;
+    let ip = format!("{}:{}", host, port);
+
+    let Ok(mut listener) = TcpStream::connect(&ip) else {
+        log::trace!("Failed to connect to given ip: {}", ip);
+        return env.new_string("IPsBad").expect("Java, you're evil!").into_raw();
     };
 
-    estimate(&classifications)
-}
-
-fn open_image(filename: &str) -> Option<image::RgbaImage> {
-    let filename = tilde(&filename);
-
-    log::trace!("{:?}", &filename);
-
-    let filename = match std::fs::canonicalize(std::borrow::Cow::as_ref(&filename)) {
-        Ok(filename) => filename,
-        Err(error) => {
-            log::error!("{:?}", error);
-            return None;
-        }
+    let Ok(()) = listener.write_all(filename.as_bytes()) else {
+        log::trace!("Failed to connect to given ip: {}", ip);
+        return env.new_string("NoWrite").expect("Java, you're evil!").into_raw();
     };
 
-    let image = match image::open(filename) {
-        Ok(image) => image,
-        Err(error) => {
-            log::error!("{:?}", error);
-            return None;
-        }
+    listener.shutdown(std::net::Shutdown::Write).ok();
+
+    let mut value = [0; 10];
+    let Ok(()) = listener.read_exact(&mut value) else {
+        log::trace!("Failed to connect to given ip: {}", ip);
+        return env.new_string("NoRead").expect("Java, you're evil!").into_raw();
     };
 
-    let image = image.to_rgba8();
-
-    Some(image)
-}
-
-fn load_model() -> Option<Model> {
-    let Ok(modelfile) = File::open("model.onnx") else {
-        log::error!("Couldn't File::open(\"model.onnx\")");
-        return None;
+    let Ok(value) = String::from_utf8(value.to_vec()) else {
+        return env.new_string("NoUTF8").expect("Java, you're evil!").into_raw();
     };
 
-    let Ok(model) = nsfw::create_model(modelfile) else {
-        log::error!("Couldn't nsfw::create_model(modelfile)");
-        return None;
-    };
-
-    Some(model)
-}
-
-fn classif(model: &Model, image: &image::RgbaImage) -> Option<Vec<Classification>> {
-    let Ok(classifications) = nsfw::examine(model, image) else {
-        log::error!("Couldn't nsfw::examine(model, image)");
-        return None;
-    };
-
-    Some(classifications)
-}
-
-fn estimate(classifications: &[Classification]) -> bool {
-    let mut normal_sum = 0.0;
-    let mut abnormal_sum = 0.0;
-
-    for classif in classifications {
-        match &classif.metric {
-            nsfw::model::Metric::Neutral => {
-                log::trace!("Neutral: {}", classif.score);
-                normal_sum += classif.score;
-            }
-            nsfw::model::Metric::Drawings => {
-                log::trace!("Drawings: {}", classif.score);
-                normal_sum += classif.score;
-            }
-            other_metric => {
-                log::trace!("{other_metric:?}: {}", classif.score);
-                abnormal_sum += classif.score;
-            }
-        }
-    }
-
-    normal_sum >= 10.0 * abnormal_sum
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Instant;
-
-    use crate::{classif, estimate, load_model, open_image};
-
-    fn bench<Ret>(fun: impl FnOnce() -> Ret) -> Ret {
-        let timer = Instant::now();
-        let ret = fun();
-        println!(": {:?}", timer.elapsed());
-        ret
-    }
-
-    #[test]
-    fn model_benches() {
-        print!("open_image");
-        let Some(image) = bench(|| open_image("test-images/nsfw_image_2.jpeg")) else {
-            return;
-        };
-
-        print!("load_model");
-        let Some(model) = bench(load_model) else {
-            return;
-        };
-
-        print!("classif");
-        let Some(classifications) = bench(|| classif(&model, &image)) else {
-            return;
-        };
-
-        print!("estimate");
-        let estimation = bench(|| estimate(&classifications));
-        println!("Estimated: {:?}", estimation);
-    }
+    return env.new_string(value).expect("Java, you're evil!").into_raw();
 }

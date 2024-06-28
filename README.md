@@ -1,4 +1,4 @@
-# Rust's NSFW detection library adapter for Java
+# (Rust's NSFW detection library) adapter for Java
 (I didn't come up with a pretty name. It is not a standalone tool by now, so I'm not sure if it needs its own name at all)
 
 It is a part of [ren-java-backend](https://github.com/LiGM-GH/ren_java_backend)
@@ -10,5 +10,10 @@ then you could:
 - `cargo install cargo-binstall` and then `cargo binstall just`
 - or instead just `cargo install just`
 
-> Now that everything's ready, you can run `just run`, which might be a little slow, but it will compile Rust part fast, at least,
-  or you could run `just release-run`
+Now that everything's ready, you can run
+```bash
+just release-daemon &
+just release-java
+```
+
+To include this in your Java code, copy `java_code/NsfwPredictor.java` to your repo, compile Rust, unleash the daemon with `just release-daemon`, then add `LD_LIBRARY_PATH` which is path to your compiled `.so` library to env variables for your Java for it to know where to find the library.
